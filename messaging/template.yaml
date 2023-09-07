@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  multimedia-sales messaging
+  IMPORTANTE!!! Si tienes un error primero corrijelo antes de hacer mas cambios 
+
+Parameters:
+  STACKPREFIX:
+    Type: String
+    Default: ''
+
+Resources:
+
+# ---------------- SQS ----------------
+  SQSProcessMediaFiles:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${STACKPREFIX}-process-media-files"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DLQProcessMediaFiles.Arn
+        maxReceiveCount: 3
+      VisibilityTimeout: 60
+
+  DLQProcessMediaFiles:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${STACKPREFIX}-process-media-files-dlq"
+
+  EventSourceMappingLambdaProcessMediaFiles:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Sub "${STACKPREFIX}-move-images-from-s3"
+      BatchSize: 10
+      EventSourceArn: !GetAtt SQSProcessMediaFiles.Arn
+      Enabled: true
+      MaximumBatchingWindowInSeconds: 30
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"body": {"mediaType": ["image", "image_profile", "image_logo"]}}'

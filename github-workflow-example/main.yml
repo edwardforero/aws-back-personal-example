@@ -1,0 +1,206 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - development
+
+env:
+  ENVIRONMENT_NAME: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.MAIN_AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.MAIN_AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: us-east-1
+  STACK_PREFIX: "myproject"
+  SITE_URL: ${{ github.ref == 'refs/heads/main' && 'https://localhost:3000' || 'https://localhost:3000' }}
+  StripePrivateKey: ${{ github.ref == 'refs/heads/main' &&  secrets.STRIPEPRIVATEKEY || secrets.DEVSTRIPEPRIVATEKEY }}
+
+
+jobs:
+
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      iam: ${{ steps.changes.outputs.iam }}
+      cognito: ${{ steps.changes.outputs.cognito }}
+      storage: ${{ steps.changes.outputs.storage }}
+      backend: ${{ steps.changes.outputs.backend }}
+      messaging: ${{ steps.changes.outputs.messaging }}
+    steps:
+    - uses: actions/checkout@v3
+    - uses: dorny/paths-filter@v2
+      id: changes
+      with:
+        filters: |
+          iam:
+            - 'iam/**'
+          cognito:
+            - 'cognito/**'
+          storage:
+            - 'storage/**'
+          backend:
+            - 'backend/**'
+          messaging:
+            - 'messaging/**'
+
+  create_s3_bucket:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if S3 bucket exists
+        id: check_bucket
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          bucket_name="${account_id}-cloudformation-deploy"
+          echo "BUCKET_NAME=${bucket_name}" >> $GITHUB_ENV
+          if aws s3api head-bucket --bucket "${bucket_name}" 2>/dev/null; then
+            echo "S3 bucket already exists"
+            echo "::set-output name=exists::true"
+          else
+            echo "S3 bucket does not exist"
+            echo "::set-output name=exists::false"
+            aws s3api create-bucket --bucket "${bucket_name}" --region "${{ env.AWS_REGION }}"
+          fi
+  
+  deploy_iam_stack:
+    needs: [changes, create_s3_bucket]
+    if: ${{ needs.changes.outputs.iam == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+      - name: Install AWS SAM CLI
+        run: pip install aws-sam-cli
+      - name: Build IAM stack
+        working-directory: iam
+        run: sam build
+      - name: Deploy IAM stack
+        working-directory: iam
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          bucket_name="${account_id}-cloudformation-deploy"
+          sam deploy \
+            --stack-name "${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }}-iam" \
+            --s3-prefix iam --region "${{ env.AWS_REGION }}" --s3-bucket "${bucket_name}" \
+            --parameter-overrides ParameterKey=STACKPREFIX,ParameterValue="${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }}" ParameterKey=DEPLOYMENTBUCKET,ParameterValue="${bucket_name}"
+
+  deploy_cognito_stack:
+    needs: deploy_iam_stack
+    if: |
+      always() &&
+      (needs.deploy_iam_stack.result == 'success' || needs.deploy_iam_stack.result == 'skipped') &&
+      needs.changes.outputs.cognito == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+      - name: Install AWS SAM CLI
+        run: pip install aws-sam-cli
+      - name: Build COGNITO stack
+        working-directory: cognito
+        run: sam build
+      - name: Deploy COGNITO stack
+        working-directory: cognito
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          bucket_name="${account_id}-cloudformation-deploy"
+          sam deploy \
+            --stack-name "${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }}-cognito" \
+            --s3-prefix cognito --region "${{ env.AWS_REGION }}" --s3-bucket "${bucket_name}" \
+            --parameter-overrides ParameterKey=STACKPREFIX,ParameterValue="${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }} "ParameterKey=SITEURL,ParameterValue="${{ env.SITE_URL }}" ParameterKey=StripePrivateKey,ParameterValue="${{ env.StripePrivateKey }}"
+
+  deploy_storage_stack:
+    needs: deploy_iam_stack
+    if: |
+      always() &&
+      (needs.deploy_iam_stack.result == 'success' || needs.deploy_iam_stack.result == 'skipped') &&
+      needs.changes.outputs.storage == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+      - name: Install AWS SAM CLI
+        run: pip install aws-sam-cli
+      - name: Build STORAGE stack
+        working-directory: storage
+        run: sam build
+      - name: Deploy STORAGE stack
+        working-directory: storage
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          bucket_name="${account_id}-cloudformation-deploy"
+          sam deploy \
+            --stack-name "${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }}-storage" \
+            --s3-prefix storage --region "${{ env.AWS_REGION }}" --s3-bucket "${bucket_name}" \
+            --parameter-overrides ParameterKey=STACKPREFIX,ParameterValue="${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }}" 
+
+  deploy_backend_stack:
+    needs: [deploy_cognito_stack, deploy_storage_stack]
+    if: |
+      always() &&
+      (needs.deploy_cognito_stack.result == 'success' || needs.deploy_cognito_stack.result == 'skipped') &&
+      (needs.deploy_storage_stack.result == 'success' || needs.deploy_storage_stack.result == 'skipped') &&
+      needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+      - name: Install AWS SAM CLI
+        run: pip install aws-sam-cli
+      - name: Build BACKEND stack
+        working-directory: backend
+        run: sam build
+      - name: Deploy BACKEND stack
+        working-directory: backend
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          bucket_name="${account_id}-cloudformation-deploy"
+          sam deploy \
+            --stack-name "${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }}-backend" \
+            --s3-prefix backend --region "${{ env.AWS_REGION }}" --s3-bucket "${bucket_name}" \
+            --parameter-overrides ParameterKey=STACKPREFIX,ParameterValue="${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }}" ParameterKey=StripePrivateKey,ParameterValue="${{ env.StripePrivateKey }}"
+
+  deploy_messaging_stack:
+    needs: [deploy_backend_stack, deploy_storage_stack]
+    if: |
+      always() &&
+      (needs.deploy_backend_stack.result == 'success' || needs.deploy_backend_stack.result == 'skipped') &&
+      (needs.deploy_storage_stack.result == 'success' || needs.deploy_storage_stack.result == 'skipped') &&
+      needs.changes.outputs.messaging == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+      - name: Install AWS SAM CLI
+        run: pip install aws-sam-cli
+      - name: Build messaging stack
+        working-directory: messaging
+        run: sam build
+      - name: Deploy messaging stack
+        working-directory: messaging
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          bucket_name="${account_id}-cloudformation-deploy"
+          sam deploy \
+            --stack-name "${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }}-messaging" \
+            --s3-prefix messaging --region "${{ env.AWS_REGION }}" --s3-bucket "${bucket_name}" \
+            --parameter-overrides ParameterKey=STACKPREFIX,ParameterValue="${{ env.ENVIRONMENT_NAME }}-${{ env.STACK_PREFIX }}" 

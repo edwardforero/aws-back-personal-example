@@ -1,0 +1,250 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  multimedia-sales cognito
+  IMPORTANTE!!! Si tienes un error primero corrijelo antes de hacer mas cambios 
+
+Parameters:
+  STACKPREFIX:
+    Type: String
+    Default: ''
+  SITEURL:
+    Type: String
+    Default: ''
+  StripePrivateKey:
+    Type: String
+    Default: ''
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    Timeout: 6
+    EventInvokeConfig:
+      MaximumRetryAttempts: 0
+    Handler: lambda_function.lambda_handler
+    Runtime: python3.9
+    Environment:
+      Variables:
+        table_users_rels_sellers: !Sub "${STACKPREFIX}-users-rels-sellers"
+        table_users_memberships_purchases: !Sub "${STACKPREFIX}-users-memberships-purchases"
+        table_users_media_purchases: !Sub "${STACKPREFIX}-users-media-purchases"
+        table_user_additional_data: !Sub "${STACKPREFIX}-user-additional-data"
+        site_url: !Ref SITEURL
+        stripe_private_key: !Ref StripePrivateKey
+
+Resources:
+
+  LambdaCustomMessage:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/cognito-events/custom-message
+      Description: cognito CustomEmailSender action 
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/${STACKPREFIX}-lambdas-role"
+      FunctionName: !Sub "${STACKPREFIX}-cognito-custom-message"
+  LogsLambdaCustomMessage:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaCustomMessage}"
+      RetentionInDays: 1
+
+  LambdaPreTokenGeneration:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/cognito-events/pre-token-generation
+      Description: cognito PreTokenGeneration action 
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/${STACKPREFIX}-lambdas-role"
+      FunctionName: !Sub "${STACKPREFIX}-cognito-pretoken-generation"
+  LogsLambdaPreTokenGeneration:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaPreTokenGeneration}"
+      RetentionInDays: 1
+
+  LambdaPostConfirmation:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/cognito-events/post-confirmation
+      Description: cognito PostConfirmation action 
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/${STACKPREFIX}-lambdas-role"
+      FunctionName: !Sub "${STACKPREFIX}-cognito-post-confirmation"
+  LogsLambdaPostConfirmation:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaPostConfirmation}"
+      RetentionInDays: 1
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+          - Name: verified_phone_number
+            Priority: 2
+      AutoVerifiedAttributes:
+        - email
+      Policies: 
+        PasswordPolicy:
+          MinimumLength: 6
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 0
+      Schema:
+        - Name: role
+          AttributeDataType: String
+          DeveloperOnlyAttribute: false
+          Mutable: true
+          Required: false
+        - Name: stripeCustomerId
+          AttributeDataType: String
+          DeveloperOnlyAttribute: false
+          Mutable: true
+          Required: false
+      UsernameAttributes:
+        - phone_number
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      VerificationMessageTemplate:
+        EmailMessage: "Hola, link http://localhost:3000/validate/{username}/{####}"
+        EmailSubject: "Confirma tu cuenta en La pagina"
+      LambdaConfig:
+        PreTokenGeneration: !GetAtt LambdaPreTokenGeneration.Arn
+        CustomMessage: !GetAtt LambdaCustomMessage.Arn
+      UserPoolName: !Sub "${STACKPREFIX}-cognito-user-pool"
+  
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties: 
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 3
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: hours
+      AllowedOAuthFlows:
+        - code
+        - implicit
+      AllowedOAuthScopes:
+        - phone
+        - email
+        - openid
+        - profile
+        - aws.cognito.signin.user.admin
+      CallbackURLs:
+        - !Sub "${SITEURL}/"
+      LogoutURLs:
+        - !Sub "${SITEURL}/logout"
+      AllowedOAuthFlowsUserPoolClient: true
+      ClientName: !Sub "${STACKPREFIX}-cognito-user-pool-client"
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      PreventUserExistenceErrors: LEGACY
+      ReadAttributes: 
+        - email
+        - email_verified
+        - phone_number
+        - phone_number_verified
+        - family_name
+        - given_name
+        - custom:role
+      SupportedIdentityProviders: 
+        - COGNITO
+        - Google
+        - Facebook
+      UserPoolId: !Ref CognitoUserPool
+      WriteAttributes: 
+        - email
+        - phone_number
+        - family_name
+        - given_name
+  
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties: 
+      AllowClassicFlow: true
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders: 
+        - ClientId: !Ref CognitoUserPoolClient
+          ProviderName: !GetAtt CognitoUserPool.ProviderName
+      IdentityPoolName: !Sub "${STACKPREFIX}-cognito-identity-pool"
+
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub "${STACKPREFIX}-domain"
+      UserPoolId: !Ref CognitoUserPool
+
+  IdentityProviderGoogle:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Properties:
+      ProviderName: Google
+      ProviderType: Google
+      AttributeMapping:
+        email: "email"
+      ProviderDetails:
+        client_id: 743748838489-165veokfd9iq8kf9drhqs6tgppvjf5b5.apps.googleusercontent.com
+        client_secret: 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
+        authorize_scopes: profile email openid
+      UserPoolId: !Ref CognitoUserPool
+
+  IdentityProviderFacebook:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Properties:
+      ProviderName: Facebook
+      ProviderType: Facebook
+      AttributeMapping:
+        email: "email"
+      ProviderDetails:
+        client_id: "253948900862991"
+        client_secret: 8046e243628bc2e32b2a809fb1403a9a
+        authorize_scopes: email openid
+      UserPoolId: !Ref CognitoUserPool
+
+  IdentityPoolRoleAttachment: 
+    Type: AWS::Cognito::IdentityPoolRoleAttachment 
+    Properties: 
+      IdentityPoolId: !Ref CognitoIdentityPool
+      Roles: 
+        "authenticated": !Sub "arn:aws:iam::${AWS::AccountId}:role/${STACKPREFIX}-cognito-auth-user-role"
+        "unauthenticated": !Sub "arn:aws:iam::${AWS::AccountId}:role/${STACKPREFIX}-cognito-unauth-user-role"
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LambdaPreTokenGeneration.Arn
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt "CognitoUserPool.Arn"
+
+  LambdaPermissionLambdaCustomMessage:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LambdaCustomMessage.Arn
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt "CognitoUserPool.Arn"
+
+Outputs:
+  CognitoUserPoolID:
+    Description: "UserPoolID"
+    Value: !Ref CognitoUserPool
+    Export:
+      Name: !Sub "${STACKPREFIX}CognitoUserPoolID"
+  CognitoUserPoolClientID:
+    Description: "APP_CLIENT_ID"
+    Value: !Ref CognitoUserPoolClient
+    Export:
+      Name: !Sub "${STACKPREFIX}CognitoUserPoolClientID"
+  CognitoUserPoolArn:
+    Description: "user pool arn"
+    Value: !GetAtt CognitoUserPool.Arn 
+    Export:
+      Name: !Sub "${STACKPREFIX}CognitoUserPoolArn"

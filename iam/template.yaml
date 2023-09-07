@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  multimedia-sales iam
+  IMPORTANTE!!! Si tienes un error primero corrijelo antes de hacer mas cambios 
+
+Parameters:
+  STACKPREFIX:
+    Type: String
+    Default: ''
+  DEPLOYMENTBUCKET:
+    Type: String
+    Default: ''
+
+Resources:
+
+  LambdaBasicPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${STACKPREFIX}-lambdas-basic-policy"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - logs:*
+            Effect: Allow
+            Resource: arn:aws:logs:*:*:*
+          - Action:
+              - dynamodb:BatchWrite*
+              - dynamodb:PutItem
+            Effect: Allow
+            Resource:
+              - !Sub arn:aws:dynamodb:*:*:table/${STACKPREFIX}*
+   
+  LambdaFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: !Sub "${STACKPREFIX}-lambdas-policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: '*'
+              - Action:
+                  - Cognito:*
+                  - cognito-idp:*
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                  - dynamodb:Get*
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchWrite*
+                  - dynamodb:BatchGetItem
+                  - dynamodb:Update*
+                  - dynamodb:PutItem
+                Effect: Allow
+                Resource:
+                  - !Sub "arn:aws:dynamodb:*:*:table/${STACKPREFIX}*"
+              - Action:
+                    - S3:*
+                Effect: Allow
+                Resource: !Sub "arn:aws:s3:::${STACKPREFIX}*/*"
+              - Action:
+                  - lambda:InvokeFunction
+                Effect: Allow
+                Resource: '*'
+      ManagedPolicyArns:
+        - !Ref LambdaBasicPolicy
+      RoleName: !Sub "${STACKPREFIX}-lambdas-role"
+
+  CognitoAuthUserPoolRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cognito-idp.amazonaws.com
+                - email.cognito-idp.amazonaws.com
+              Federated:
+                - cognito-idp.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:AssumeRoleWithWebIdentity
+      Path: "/"
+      Policies:
+        - PolicyName: CognitoUnAuthPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "mobileanalytics:PutEvents"
+                  - "cognito-sync:*"
+                  - "cognito-identity:*"
+                Resource: 
+                  - "*"
+              - Effect: Allow
+                Action:
+                  - "execute-api:Invoke"
+                Resource: '*'
+      RoleName: !Sub "${STACKPREFIX}-cognito-auth-user-role"
+    
+  CognitoUnAuthUserPoolRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cognito-idp.amazonaws.com
+                - email.cognito-idp.amazonaws.com
+              Federated:
+                - cognito-idp.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:AssumeRoleWithWebIdentity
+      Path: "/"
+      Policies:
+        - PolicyName: CognitoUnAuthPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "mobileanalytics:PutEvents"
+                  - "cognito-sync:*"
+                Resource:
+                  - "*"
+              - Effect: Allow
+                Action:
+                  - "execute-api:Invoke"
+                Resource: '*'
+      RoleName: !Sub "${STACKPREFIX}-cognito-unauth-user-role"

@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  multimedia-sales storage
+  IMPORTANTE!!! Si tienes un error primero corrijelo antes de hacer mas cambios 
+
+Parameters:
+  STACKPREFIX:
+    Type: String
+    Default: ''
+
+Resources:
+# ---------------- DynamoDB -------------------------
+  TableSellersProfile:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: 
+        - AttributeName: "sellerId"
+          AttributeType: "S"
+      KeySchema: 
+        - AttributeName: "sellerId"
+          KeyType: "HASH"
+      TableName: !Sub "${STACKPREFIX}-sellers"
+
+  TableSellersMembershipTypes:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: 
+        - AttributeName: "sellerId"
+          AttributeType: "S"
+        - AttributeName: "membershipPriority"
+          AttributeType: "N"
+      KeySchema: 
+        - AttributeName: "sellerId"
+          KeyType: "HASH"
+        - AttributeName: "membershipPriority"
+          KeyType: "RANGE"
+      TableName: !Sub "${STACKPREFIX}-membership-types"
+
+  TableUserRelsSellers:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: 
+        - AttributeName: "username"
+          AttributeType: "S"
+        - AttributeName: "sellerId"
+          AttributeType: "S"
+      KeySchema: 
+        - AttributeName: "username"
+          KeyType: "HASH"
+        - AttributeName: "sellerId"
+          KeyType: "RANGE"
+      TableName: !Sub "${STACKPREFIX}-users-rels-sellers"
+  
+  TableSellersMediaFiles:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: 
+        - AttributeName: "sellerId"
+          AttributeType: "S"
+        - AttributeName: "mediaType_createdAt_mediaId"
+          AttributeType: "S"
+      KeySchema: 
+        - AttributeName: "sellerId"
+          KeyType: "HASH"
+        - AttributeName: "mediaType_createdAt_mediaId"
+          KeyType: "RANGE"
+      TableName: !Sub "${STACKPREFIX}-sellers-media-files"
+
+  TableSellersPendingsMediaFiles:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: 
+        - AttributeName: "sellerId"
+          AttributeType: "S"
+        - AttributeName: "mediaType_createdAt_mediaId"
+          AttributeType: "S"
+      KeySchema: 
+        - AttributeName: "sellerId"
+          KeyType: "HASH"
+        - AttributeName: "mediaType_createdAt_mediaId"
+          KeyType: "RANGE"
+      TableName: !Sub "${STACKPREFIX}-sellers-pendings-media-files"
+
+  TableuserAdditionalData:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: 
+        - AttributeName: "username"
+          AttributeType: "S"
+        - AttributeName: "dataType"
+          AttributeType: "S"
+      KeySchema: 
+        - AttributeName: "username"
+          KeyType: "HASH"
+        - AttributeName: "dataType"
+          KeyType: "RANGE"
+      TableName: !Sub "${STACKPREFIX}-user-additional-data"
+
+  TableUsersMediaPurchases:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: 
+        - AttributeName: "username"
+          AttributeType: "S"
+        - AttributeName: "createdAt"
+          AttributeType: "N"
+      KeySchema: 
+        - AttributeName: "username"
+          KeyType: "HASH"
+        - AttributeName: "createdAt"
+          KeyType: "RANGE"
+      TableName: !Sub "${STACKPREFIX}-users-media-purchases"
+
+  TableUsersMembershipsPurchases:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: 
+        - AttributeName: "username"
+          AttributeType: "S"
+        - AttributeName: "expireAt"
+          AttributeType: "N"
+      KeySchema: 
+        - AttributeName: "username"
+          KeyType: "HASH"
+        - AttributeName: "expireAt"
+          KeyType: "RANGE"
+      LocalSecondaryIndexes:
+        - IndexName: "username-sellerId-index"
+          KeySchema:
+            - AttributeName: "username"
+              KeyType: "HASH"
+            - AttributeName: "sellerId"
+              KeyType: "RANGE"
+          Projection:
+            ProjectionType: "INCLUDE"
+            NonKeyAttributes:
+              - membershipPriority
+              - active
+              - sellerId
+      TimeToLiveSpecification:
+        AttributeName: "ttl"
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      TableName: !Sub "${STACKPREFIX}-users-memberships-purchases"
+  
+  TableErrors:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: 
+        - AttributeName: "lambdaName"
+          AttributeType: "S"
+        - AttributeName: "timestampCreated"
+          AttributeType: "S"
+      KeySchema: 
+        - AttributeName: "lambdaName"
+          KeyType: "HASH"
+        - AttributeName: "timestampCreated"
+          KeyType: "RANGE"
+      TableName: !Sub "${STACKPREFIX}-errors"
+# ---------------- end DynamoDB -------------------------
+
+# ---------------- s3 buckets -------------------------
+  S3MediaFiles:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${STACKPREFIX}-${AWS::AccountId}-media-files"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+
+  MediaSalesFrontS3:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${STACKPREFIX}-${AWS::AccountId}-media-sales-front" 
+      # AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: ObjectWriter
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+
+  MediaSalesFrontS3Policy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaSalesFrontS3
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: !Sub "${STACKPREFIX}-bucket-policy-media-sales-front-public-read-get-object"
+            Effect: Allow
+            Principal: '*'
+            Action: 
+              - s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${MediaSalesFrontS3}/*"
+
+# ---------------- end s3 buckets -------------------------

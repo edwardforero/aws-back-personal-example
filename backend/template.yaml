@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  multimedia-sales backend
+  IMPORTANTE!!! Si tienes un error primero corrijelo antes de hacer mas cambios 
+
+Parameters:
+  STACKPREFIX:
+    Type: String
+    Default: ''
+  BackblazeConfig:
+    Type: String
+    Default: ''
+  StripePrivateKey:
+    Type: String
+    Default: ''
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    Timeout: 6
+    EventInvokeConfig:
+      MaximumRetryAttempts: 0
+    Handler: lambda_function.lambda_handler
+    Runtime: python3.9
+    Layers:
+      - !Ref LayerUtils
+      - !Ref LayerDecodeToken
+      - !Ref LayerDynamoUtils
+    Environment:
+      Variables:
+        COGNITO_ARN: !ImportValue 
+                        Fn::Sub: "${STACKPREFIX}CognitoUserPoolArn"
+        USER_POOL_ID: !ImportValue 
+                        Fn::Sub: "${STACKPREFIX}CognitoUserPoolID"
+        CLIENT_ID: !ImportValue 
+                        Fn::Sub: "${STACKPREFIX}CognitoUserPoolClientID"
+        table_errors: !Sub "${STACKPREFIX}-errors"
+        table_users_rels_sellers: !Sub "${STACKPREFIX}-users-rels-sellers"
+        table_sellers_mediafiles: !Sub "${STACKPREFIX}-sellers-media-files"
+        table_sellers_membership_types: !Sub "${STACKPREFIX}-membership-types" 
+        table_users_media_purchases: !Sub "${STACKPREFIX}-users-media-purchases"
+        table_users_memberships_purchases: !Sub "${STACKPREFIX}-users-memberships-purchases"
+        table_sellers_profile: !Sub "${STACKPREFIX}-sellers"
+        sqs_process_mediaFiles_url: !Sub "https://sqs.us-east-1.amazonaws.com/${AWS::AccountId}/${STACKPREFIX}-process-media-files"
+        backblaze_config: !Ref BackblazeConfig
+        s3_media_files:  !Sub "${STACKPREFIX}-${AWS::AccountId}-media-sales-front"
+
+Resources:
+
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      # ApiKeySourceType: HEADER
+      Auth:
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !ImportValue 
+                          Fn::Sub: "${STACKPREFIX}CognitoUserPoolArn"
+            Identity:
+              Headers:
+                - Authorization
+        ApiKeyRequired: true 
+        UsagePlan:
+          CreateUsagePlan: PER_API
+          UsagePlanName: GatewayAuthorization
+      StageName: Prod
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'*'"
+        AllowOrigin: "'*'"
+
+# ---------------- Lambdas ----------------
+
+  LambdaUsersLogin:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/users/login
+      Description: users login
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/${STACKPREFIX}-lambdas-role"
+      FunctionName: !Sub "${STACKPREFIX}-user-login"
+      Events:
+        LambdaApiEvent:
+          Type: Api
+          Properties:
+            Path: /users/login
+            Method: POST
+            RestApiId: !Ref ApiGateway
+  LogsLambdaUsersLogin:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaUsersLogin}"
+      RetentionInDays: 1
+
+# ---------------- layers ----------------
+  LayerDecodeToken:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      CompatibleRuntimes: 
+        - python3.9
+      ContentUri: layers/decode_token/.
+      Description: decode token cognito and middleware
+      LayerName: !Sub "${STACKPREFIX}-decode_token"
+      RetentionPolicy: Retain
+
+  LayerUtils:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      CompatibleRuntimes: 
+        - python3.9
+      ContentUri: layers/utils/.
+      Description: utils
+      LayerName: !Sub "${STACKPREFIX}-utils"
+      RetentionPolicy: Retain
+
+  LayerDynamoUtils:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      CompatibleRuntimes: 
+        - python3.9
+      ContentUri: layers/dynamo_utils/.
+      Description: dynamoutils
+      LayerName: !Sub "${STACKPREFIX}-dynamo_utils"
+      RetentionPolicy: Retain
+# ---------------- end layers ----------------
+
