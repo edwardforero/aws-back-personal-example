@@ -71,22 +71,6 @@ Resources:
           KeyType: "RANGE"
       TableName: !Sub "${STACKPREFIX}-sellers-media-files"
 
-  TableSellersPendingsMediaFiles:
-    Type: AWS::DynamoDB::Table
-    Properties: 
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions: 
-        - AttributeName: "sellerId"
-          AttributeType: "S"
-        - AttributeName: "mediaType_createdAt_mediaId"
-          AttributeType: "S"
-      KeySchema: 
-        - AttributeName: "sellerId"
-          KeyType: "HASH"
-        - AttributeName: "mediaType_createdAt_mediaId"
-          KeyType: "RANGE"
-      TableName: !Sub "${STACKPREFIX}-sellers-pendings-media-files"
-
   TableuserAdditionalData:
     Type: AWS::DynamoDB::Table
     Properties: 
